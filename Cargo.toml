@@ -11,8 +11,8 @@ name = "rscpoc-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "rscpoc-streamer"
-path = "src/streamer.rs"
+name = "rscpoc-encoder"
+path = "src/encoder.rs"
 
 [dependencies]
 actix-web = "2.0.0"

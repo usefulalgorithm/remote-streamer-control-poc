@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 mod server;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-const STREAMER_TIMEOUT: Duration = Duration::from_secs(10);
+const ENCODER_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct WsStreamerSession {
     /// unique session id
@@ -92,9 +92,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession
 impl WsStreamerSession {
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            if Instant::now().duration_since(act.hb) > STREAMER_TIMEOUT {
+            if Instant::now().duration_since(act.hb) > ENCODER_TIMEOUT {
                 // timed out
-                warn!("Streamer timed out!");
+                warn!("Encoder timed out!");
                 act.addr.do_send(server::Disconnect { id: act.id });
                 ctx.stop();
                 return;
@@ -104,7 +104,7 @@ impl WsStreamerSession {
     }
 }
 
-async fn streamer_route(
+async fn encoder_route(
     req: HttpRequest,
     stream: web::Payload,
     srv: web::Data<Addr<server::RemoteServer>>,
@@ -148,7 +148,7 @@ async fn send_route(
             .body(format!("Successfully sent to id={}\n", target))),
         None => {
             Ok(HttpResponse::NotFound()
-                .body(format!("Cannot find streamer with id={}\n", target)))
+                .body(format!("Cannot find encoder with id={}\n", target)))
         }
     }
 }
@@ -169,8 +169,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .wrap(middleware::Logger::new("%a %{User-Agent}i"))
             .data(server.clone())
-            // streamers - websocket
-            .service(web::resource("/ws/").to(streamer_route))
+            // encoders - websocket
+            .service(web::resource("/ws/").to(encoder_route))
             // client - send json command
             .service(
                 web::resource("/send/{target}").route(
@@ -179,7 +179,7 @@ async fn main() -> std::io::Result<()> {
                         .to(send_route),
                 ),
             )
-            // client - list streamers
+            // client - list encoders
             .service(web::resource("/list").route(web::get().to(list_route)))
     })
     .bind(("0.0.0.0", port))?

@@ -19,7 +19,7 @@ fn main() {
     env_logger::init();
     let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:8080".to_string());
 
-    let sys = System::new("rscpoc-streamer");
+    let sys = System::new("rscpoc-encoder");
     Arbiter::spawn(async move {
         let (response, framed) = Client::new()
             .ws(format!("{}/ws/", server_url))
@@ -31,33 +31,33 @@ fn main() {
             .unwrap();
         info!("{:?}", response);
         let (sink, stream) = framed.split();
-        let addr = Streamer::create(|ctx| {
-            Streamer::add_stream(stream, ctx);
-            Streamer(SinkWrite::new(sink, ctx))
+        let addr = Encoder::create(|ctx| {
+            Encoder::add_stream(stream, ctx);
+            Encoder(SinkWrite::new(sink, ctx))
         });
-        addr.do_send(StreamerCmd::new(StreamerCmdTypes::ID));
+        addr.do_send(EncoderCmd::new(EncoderCmdTypes::ID));
     });
     sys.run().unwrap();
 }
 
-struct Streamer(SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>);
+struct Encoder(SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>);
 
 #[derive(Debug)]
-enum StreamerCmdTypes {
+enum EncoderCmdTypes {
     ID,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
-struct StreamerCmd(String);
+struct EncoderCmd(String);
 
-impl StreamerCmd {
-    fn new(cmd_type: StreamerCmdTypes) -> Self {
-        StreamerCmd(format!("/{:?}", cmd_type))
+impl EncoderCmd {
+    fn new(cmd_type: EncoderCmdTypes) -> Self {
+        EncoderCmd(format!("/{:?}", cmd_type))
     }
 }
 
-impl Actor for Streamer {
+impl Actor for Encoder {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
@@ -70,7 +70,7 @@ impl Actor for Streamer {
     }
 }
 
-impl Streamer {
+impl Encoder {
     fn hb(&self, ctx: &mut Context<Self>) {
         ctx.run_later(HEARTBEAT_INTERVAL, |act, ctx| {
             act.0.write(Message::Ping(Bytes::from_static(b""))).unwrap();
@@ -79,15 +79,15 @@ impl Streamer {
     }
 }
 
-impl Handler<StreamerCmd> for Streamer {
+impl Handler<EncoderCmd> for Encoder {
     type Result = ();
 
-    fn handle(&mut self, msg: StreamerCmd, _: &mut Context<Self>) {
+    fn handle(&mut self, msg: EncoderCmd, _: &mut Context<Self>) {
         self.0.write(Message::Text(msg.0)).unwrap();
     }
 }
 
-impl StreamHandler<Result<Frame, WsProtocolError>> for Streamer {
+impl StreamHandler<Result<Frame, WsProtocolError>> for Encoder {
     fn handle(&mut self, msg: Result<Frame, WsProtocolError>, _: &mut Context<Self>) {
         if let Ok(Frame::Text(txt)) = msg {
             info!("From Server: {}", std::str::from_utf8(&txt).unwrap())
@@ -104,4 +104,4 @@ impl StreamHandler<Result<Frame, WsProtocolError>> for Streamer {
     }
 }
 
-impl actix::io::WriteHandler<WsProtocolError> for Streamer {}
+impl actix::io::WriteHandler<WsProtocolError> for Encoder {}

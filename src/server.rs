@@ -9,14 +9,14 @@ pub struct Message(pub String);
 
 /// Server message types:
 
-/// Connect: streamer connects to server, would respond with a usize as id
+/// Connect: encoder connects to server, would respond with a usize as id
 #[derive(Message)]
 #[rtype(usize)]
 pub struct Connect {
     pub addr: Recipient<Message>,
 }
 
-/// Disconnect: streamer disconnects from server
+/// Disconnect: encoder disconnects from server
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Disconnect {
@@ -29,18 +29,18 @@ pub struct Disconnect {
 pub struct ClientMessage {
     /// Peer message
     pub msg: Bytes,
-    /// Id of the target streamer
+    /// Id of the target encoder
     pub target: usize,
 }
 
-/// List: list available streamers
+/// List: list available encoders
 pub struct List;
 
 impl actix::Message for List {
     type Result = Vec<usize>;
 }
 
-/// `RemoteServer` is responsible for managing streamer websocket endpoints
+/// `RemoteServer` is responsible for managing encoder websocket endpoints
 /// and dispatching client messages.
 pub struct RemoteServer {
     sessions: HashMap<usize, Recipient<Message>>,
@@ -72,12 +72,12 @@ impl Actor for RemoteServer {
 impl Handler<Connect> for RemoteServer {
     type Result = usize;
     fn handle(&mut self, msg: Connect, _: &mut Context<Self>) -> Self::Result {
-        // make a randomly generated usize as new streamer's id...
+        // make a randomly generated usize as new encoder's id...
         let id = self.rng.gen::<usize>();
         // ... and register it
         self.sessions.insert(id, msg.addr);
 
-        // send id back to streamer
+        // send id back to encoder
         id
     }
 }
@@ -103,10 +103,10 @@ impl Handler<ClientMessage> for RemoteServer {
 impl Handler<List> for RemoteServer {
     type Result = MessageResult<List>;
     fn handle(&mut self, _: List, _: &mut Context<Self>) -> Self::Result {
-        let mut streamers = Vec::new();
+        let mut encoders = Vec::new();
         for key in self.sessions.keys() {
-            streamers.push(*key);
+            encoders.push(*key);
         }
-        MessageResult(streamers)
+        MessageResult(encoders)
     }
 }
