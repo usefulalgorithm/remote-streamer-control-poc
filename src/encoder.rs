@@ -10,14 +10,19 @@ use {
     futures::stream::{SplitSink, StreamExt},
     log::{info, warn},
     std::{env, time::Duration},
+    messages::{EncoderMessage, EncoderMessageType},
 };
+
+pub mod messages;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 fn main() {
     env::set_var("RUST_LOG", "actix_web=info,info");
     env_logger::init();
-    let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:8080".to_string());
+    let server_url = env::args()
+        .nth(1)
+        .unwrap_or("http://127.0.0.1:8080".to_string());
 
     let sys = System::new("rscpoc-encoder");
     Arbiter::spawn(async move {
@@ -35,27 +40,14 @@ fn main() {
             Encoder::add_stream(stream, ctx);
             Encoder(SinkWrite::new(sink, ctx))
         });
-        addr.do_send(EncoderCmd::new(EncoderCmdTypes::ID));
+        addr.do_send(EncoderMessage::new(
+            EncoderMessageType::ID,
+        ));
     });
     sys.run().unwrap();
 }
 
 struct Encoder(SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>);
-
-#[derive(Debug)]
-enum EncoderCmdTypes {
-    ID,
-}
-
-#[derive(Message)]
-#[rtype(result = "()")]
-struct EncoderCmd(String);
-
-impl EncoderCmd {
-    fn new(cmd_type: EncoderCmdTypes) -> Self {
-        EncoderCmd(format!("/{:?}", cmd_type))
-    }
-}
 
 impl Actor for Encoder {
     type Context = Context<Self>;
@@ -79,10 +71,10 @@ impl Encoder {
     }
 }
 
-impl Handler<EncoderCmd> for Encoder {
+impl Handler<EncoderMessage> for Encoder {
     type Result = ();
 
-    fn handle(&mut self, msg: EncoderCmd, _: &mut Context<Self>) {
+    fn handle(&mut self, msg: EncoderMessage, _: &mut Context<Self>) {
         self.0.write(Message::Text(msg.0)).unwrap();
     }
 }

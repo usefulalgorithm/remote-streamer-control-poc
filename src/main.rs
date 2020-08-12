@@ -1,11 +1,15 @@
-use actix::*;
-use actix_web::{guard, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer};
-use actix_web_actors::ws;
-use bytes::Bytes;
-use log::{info, warn};
-use std::env;
-use std::time::{Duration, Instant};
+use {
+    actix::*,
+    actix_web::{guard, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer},
+    actix_web_actors::ws,
+    bytes::Bytes,
+    log::{info, warn},
+    messages::{ClientMessage, Connect, Disconnect, List, Message},
+    std::env,
+    std::time::{Duration, Instant},
+};
 
+pub mod messages;
 mod server;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -25,7 +29,7 @@ impl Actor for WsStreamerSession {
         self.hb(ctx);
         let addr = ctx.address();
         self.addr
-            .send(server::Connect {
+            .send(Connect {
                 addr: addr.recipient(),
             })
             .into_actor(self)
@@ -44,14 +48,14 @@ impl Actor for WsStreamerSession {
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         // notify remote server
-        self.addr.do_send(server::Disconnect { id: self.id });
+        self.addr.do_send(Disconnect { id: self.id });
         Running::Stop
     }
 }
 
-impl Handler<server::Message> for WsStreamerSession {
+impl Handler<Message> for WsStreamerSession {
     type Result = ();
-    fn handle(&mut self, msg: server::Message, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: Message, ctx: &mut Self::Context) {
         ctx.text(msg.0);
     }
 }
@@ -95,7 +99,7 @@ impl WsStreamerSession {
             if Instant::now().duration_since(act.hb) > ENCODER_TIMEOUT {
                 // timed out
                 warn!("Encoder timed out!");
-                act.addr.do_send(server::Disconnect { id: act.id });
+                act.addr.do_send(Disconnect { id: act.id });
                 ctx.stop();
                 return;
             }
@@ -122,7 +126,7 @@ async fn encoder_route(
 
 async fn list_route(srv: web::Data<Addr<server::RemoteServer>>) -> Result<HttpResponse, Error> {
     let addr = srv.get_ref().clone();
-    let res = addr.send(server::List).await?;
+    let res = addr.send(List).await?;
     Ok(HttpResponse::Ok()
         .content_type("text/plain")
         .body(format!("{:?}\n", res)))
@@ -137,7 +141,7 @@ async fn send_route(
 
     let addr = srv.get_ref().clone();
     let res = addr
-        .send(server::ClientMessage {
+        .send(ClientMessage {
             msg: bytes,
             target: *target,
         })
@@ -147,8 +151,7 @@ async fn send_route(
             .content_type("text/plain")
             .body(format!("Successfully sent to id={}\n", target))),
         None => {
-            Ok(HttpResponse::NotFound()
-                .body(format!("Cannot find encoder with id={}\n", target)))
+            Ok(HttpResponse::NotFound().body(format!("Cannot find encoder with id={}\n", target)))
         }
     }
 }
