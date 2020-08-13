@@ -9,8 +9,8 @@ use {
     bytes::Bytes,
     futures::stream::{SplitSink, StreamExt},
     log::{info, warn},
-    std::{env, time::Duration},
     messages::{EncoderMessage, EncoderMessageType},
+    std::{env, time::Duration},
 };
 
 pub mod messages;
@@ -40,9 +40,7 @@ fn main() {
             Encoder::add_stream(stream, ctx);
             Encoder(SinkWrite::new(sink, ctx))
         });
-        addr.do_send(EncoderMessage::new(
-            EncoderMessageType::ID,
-        ));
+        addr.do_send(EncoderMessage(EncoderMessageType::ID(None)));
     });
     sys.run().unwrap();
 }
@@ -75,14 +73,35 @@ impl Handler<EncoderMessage> for Encoder {
     type Result = ();
 
     fn handle(&mut self, msg: EncoderMessage, _: &mut Context<Self>) {
-        self.0.write(Message::Text(msg.0)).unwrap();
+        self.0
+            .write(Message::Text(serde_json::to_string(&msg).unwrap()))
+            .unwrap();
     }
 }
 
 impl StreamHandler<Result<Frame, WsProtocolError>> for Encoder {
-    fn handle(&mut self, msg: Result<Frame, WsProtocolError>, _: &mut Context<Self>) {
+    fn handle(&mut self, msg: Result<Frame, WsProtocolError>, ctx: &mut Context<Self>) {
         if let Ok(Frame::Text(txt)) = msg {
-            info!("From Server: {}", std::str::from_utf8(&txt).unwrap())
+            let msg = std::str::from_utf8(&txt).unwrap();
+            if let Ok(EncoderMessage(msg_type)) = serde_json::from_str(&msg) {
+                match msg_type {
+                    EncoderMessageType::ID(Some(id)) => info!("My ID: {}", id),
+
+                    EncoderMessageType::Cmd(cmd) => {
+                        info!("Received command: {}", cmd);
+                        // XXX Do stuff with cmd?
+                        // FIXME this will do for now
+                        // XXX What if the command never returns?
+                        let return_value = cmd.len();
+                        let addr = ctx.address();
+                        let _ =
+                            addr.do_send(EncoderMessage(EncoderMessageType::CmdRet(return_value)));
+                    }
+                    _ => warn!("Invalid EncoderMessageType: {:?}", msg_type),
+                };
+            } else {
+                warn!("Unknown message: {:?}", msg);
+            }
         }
     }
 

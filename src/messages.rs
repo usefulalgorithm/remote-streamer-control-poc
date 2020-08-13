@@ -1,8 +1,12 @@
-use {actix::prelude::*, bytes::Bytes};
+use {
+    actix::prelude::*,
+    bytes::Bytes,
+    serde::{Deserialize, Serialize},
+};
 
 #[derive(Message)]
-#[rtype(result = "()")]
-pub struct Message(pub String);
+#[rtype(result = "usize")]
+pub struct SimpleMessage(pub String);
 
 /// Server message types:
 
@@ -10,7 +14,7 @@ pub struct Message(pub String);
 #[derive(Message)]
 #[rtype(usize)]
 pub struct Connect {
-    pub addr: Recipient<Message>,
+    pub addr: Recipient<SimpleMessage>,
 }
 
 /// Disconnect: encoder disconnects from server
@@ -37,25 +41,17 @@ impl actix::Message for List {
     type Result = Vec<usize>;
 }
 
-/// EncoderCommand: command to dispatch to encoders
-#[derive(Message)]
-#[rtype(result = "usize")]
-pub struct EncoderCommand {
-    pub msg: String,
-}
-
-/// EncoderMessage: message sent by encoders to server
-#[derive(Debug)]
+/// EncoderMessage: message sent between Encoders and Server
+#[derive(Debug, Serialize, Deserialize)]
 pub enum EncoderMessageType {
-    ID,
+    /// Command dispatched by Server to Encoder
+    Cmd(String),
+    /// Return value of the dispatched command
+    CmdRet(usize),
+    /// Type for query and response for Encoder ID
+    ID(Option<usize>),
 }
 
-#[derive(Message)]
+#[derive(Message, Serialize, Deserialize, Debug)]
 #[rtype(result = "()")]
-pub struct EncoderMessage(pub String);
-
-impl EncoderMessage {
-    pub fn new(msg_type: EncoderMessageType) -> Self {
-        EncoderMessage(format!("/{:?}", msg_type))
-    }
-}
+pub struct EncoderMessage(pub EncoderMessageType);

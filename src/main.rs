@@ -4,7 +4,9 @@ use {
     actix_web_actors::ws,
     bytes::Bytes,
     log::{info, warn},
-    messages::{ClientMessage, Connect, Disconnect, List, Message},
+    messages::{
+        ClientMessage, Connect, Disconnect, EncoderMessage, EncoderMessageType, List, SimpleMessage,
+    },
     std::env,
     std::time::{Duration, Instant},
 };
@@ -53,14 +55,17 @@ impl Actor for WsStreamerSession {
     }
 }
 
-impl Handler<Message> for WsStreamerSession {
-    type Result = ();
-    fn handle(&mut self, msg: Message, ctx: &mut Self::Context) {
+impl Handler<SimpleMessage> for WsStreamerSession {
+    type Result = usize;
+    fn handle(&mut self, msg: SimpleMessage, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0);
+        // FIXME
+        12345
     }
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession {
+    /// Handles websocket messages from Encoder
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         let msg = match msg {
             Ok(msg) => msg,
@@ -78,11 +83,26 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession
             ws::Message::Pong(_) => {
                 self.hb = Instant::now();
             }
-            ws::Message::Text(text) => ctx.text(if let "/ID" = text.as_str() {
-                format!("ID = {}", self.id.to_string())
-            } else {
-                text
-            }),
+            ws::Message::Text(text) => {
+                let EncoderMessage(msg_type) = serde_json::from_str(text.as_str()).unwrap();
+                let res = match msg_type {
+                    EncoderMessageType::ID(_) => Some(
+                        serde_json::to_string(&EncoderMessage(EncoderMessageType::ID(Some(
+                            self.id,
+                        ))))
+                        .unwrap(),
+                    ),
+                    EncoderMessageType::CmdRet(ret) => {
+                        info!("Got return value: {}", ret);
+                        // Don't send anything back to Encoder
+                        None
+                    }
+                    _ => Some(text),
+                };
+                if let Some(res) = res {
+                    ctx.text(res);
+                }
+            }
             ws::Message::Binary(bin) => ctx.binary(bin),
             ws::Message::Close(reason) => {
                 ctx.close(reason);
@@ -147,9 +167,9 @@ async fn send_route(
         })
         .await?;
     match res {
-        Some(target) => Ok(HttpResponse::Ok()
+        Some(res) => Ok(HttpResponse::Ok()
             .content_type("text/plain")
-            .body(format!("Successfully sent to id={}\n", target))),
+            .body(format!("Successfully sent to id={}, return value: {}\n", target, res))),
         None => {
             Ok(HttpResponse::NotFound().body(format!("Cannot find encoder with id={}\n", target)))
         }
