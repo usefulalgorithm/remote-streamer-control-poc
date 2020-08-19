@@ -10,7 +10,7 @@ use {
     futures::stream::{SplitSink, StreamExt},
     log::{info, warn},
     messages::{EncoderMessage, EncoderMessageType},
-    std::{env, time::Duration},
+    std::{env, thread, time::Duration},
 };
 
 pub mod messages;
@@ -89,10 +89,41 @@ impl StreamHandler<Result<Frame, WsProtocolError>> for Encoder {
 
                     EncoderMessageType::Cmd(cmd) => {
                         info!("Received command: {}", cmd);
-                        // XXX Do stuff with cmd?
+
                         // FIXME this will do for now
+
+                        // emulate execution time with sleep...
+                        //thread::sleep(Duration::from_secs(1));
+                        // and return the length of command
+                        let return_value = cmd.len() as i32;
+                        /*
+                         * to pass `cmd` to os, add these:
+                         *
+                         * use std::process::Command;
+                         *
+                         * //! if `/bin/foo` prints its output to stdout:
+                         * let output = Command::new("/bin/foo")
+                         *                      .arg(cmd)
+                         *                      .output()
+                         *                      .expect("failed to execute process");
+                         * let return_value = String::from_utf8(output.stdout)
+                         *                          .unwrap()
+                         *                          .parse::<i32>()
+                         *                          .unwrap();
+                         *
+                         * //! if `/bin/foo` exits with some return code:
+                         * let return_value = Command::new("/bin/foo")
+                         *                      .arg(cmd)
+                         *                      .spawn()
+                         *                      .unwrap()
+                         *                      .wait()
+                         *                      .unwrap()
+                         *                      .code()
+                         *                      .unwrap();
+                         */
+
                         // XXX What if the command never returns?
-                        let return_value = cmd.len();
+
                         let addr = ctx.address();
                         let _ =
                             addr.do_send(EncoderMessage(EncoderMessageType::CmdRet(return_value)));

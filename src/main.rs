@@ -3,10 +3,12 @@ use {
     actix_web::{guard, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer},
     actix_web_actors::ws,
     bytes::Bytes,
-    log::{info, warn},
+    futures::channel::oneshot,
+    log::{error, info, warn},
     messages::{
-        ClientMessage, Connect, Disconnect, EncoderMessage, EncoderMessageType, List, SimpleMessage,
+        ClientMessage, Connect, Disconnect, EncoderMessage, EncoderMessageType, GetSession, List,
     },
+    serde_json::json,
     std::env,
     std::time::{Duration, Instant},
 };
@@ -17,14 +19,15 @@ mod server;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const ENCODER_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct WsStreamerSession {
+struct WsSession {
     /// unique session id
     id: usize,
     hb: Instant,
     addr: Addr<server::RemoteServer>,
+    tx: Option<oneshot::Sender<i32>>,
 }
 
-impl Actor for WsStreamerSession {
+impl Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
@@ -55,16 +58,16 @@ impl Actor for WsStreamerSession {
     }
 }
 
-impl Handler<SimpleMessage> for WsStreamerSession {
-    type Result = usize;
-    fn handle(&mut self, msg: SimpleMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(msg.0);
-        // FIXME
-        12345
+impl Handler<ClientMessage> for WsSession {
+    type Result = ();
+    fn handle(&mut self, msg: ClientMessage, ctx: &mut Self::Context) {
+        self.tx = Some(msg.tx);
+        let message = std::str::from_utf8(&msg.msg).unwrap().to_owned();
+        ctx.text(serde_json::to_string(&EncoderMessage(EncoderMessageType::Cmd(message))).unwrap());
     }
 }
 
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession {
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     /// Handles websocket messages from Encoder
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         let msg = match msg {
@@ -84,8 +87,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession
                 self.hb = Instant::now();
             }
             ws::Message::Text(text) => {
-                let EncoderMessage(msg_type) = serde_json::from_str(text.as_str()).unwrap();
-                let res = match msg_type {
+                let msg: EncoderMessage = serde_json::from_str(text.as_str()).unwrap();
+                let res = match msg.0 {
                     EncoderMessageType::ID(_) => Some(
                         serde_json::to_string(&EncoderMessage(EncoderMessageType::ID(Some(
                             self.id,
@@ -93,7 +96,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession
                         .unwrap(),
                     ),
                     EncoderMessageType::CmdRet(ret) => {
-                        info!("Got return value: {}", ret);
+                        if let Some(tx) = self.tx.take() {
+                            tx.send(ret).unwrap();
+                        } else {
+                            error!("No sender for this command");
+                        }
                         // Don't send anything back to Encoder
                         None
                     }
@@ -113,7 +120,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsStreamerSession
     }
 }
 
-impl WsStreamerSession {
+impl WsSession {
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.hb) > ENCODER_TIMEOUT {
@@ -134,10 +141,11 @@ async fn encoder_route(
     srv: web::Data<Addr<server::RemoteServer>>,
 ) -> Result<HttpResponse, Error> {
     ws::start(
-        WsStreamerSession {
+        WsSession {
             id: 0,
             hb: Instant::now(),
             addr: srv.get_ref().clone(),
+            tx: None,
         },
         &req,
         stream,
@@ -159,20 +167,23 @@ async fn send_route(
 ) -> Result<HttpResponse, Error> {
     // we only check if content-type is application/json and don't care about the rest
 
+    let mut results = None;
     let addr = srv.get_ref().clone();
-    let res = addr
-        .send(ClientMessage {
-            msg: bytes,
-            target: *target,
-        })
-        .await?;
-    match res {
-        Some(res) => Ok(HttpResponse::Ok()
-            .content_type("text/plain")
-            .body(format!("Successfully sent to id={}, return value: {}\n", target, res))),
-        None => {
-            Ok(HttpResponse::NotFound().body(format!("Cannot find encoder with id={}\n", target)))
-        }
+    let (tx, rx) = oneshot::channel::<i32>();
+    if let Some(session) = addr.send(GetSession(*target)).await? {
+        session.send(ClientMessage { msg: bytes, tx: tx }).await?;
+        results = Some(rx.await.unwrap());
+    }
+    match results {
+        Some(res) => Ok(HttpResponse::Ok().content_type("text/plain").body(
+            serde_json::to_string_pretty(&json!({
+                "target": *target,
+                "value": res,
+            }))
+            .unwrap(),
+        )),
+        None => Ok(HttpResponse::NotFound()
+            .body(serde_json::to_string_pretty(&json!({"target": *target,})).unwrap())),
     }
 }
 
@@ -181,7 +192,7 @@ async fn main() -> std::io::Result<()> {
     env::set_var("RUST_LOG", "actix_web=info,info");
     env_logger::init();
     let server = server::RemoteServer::default().start();
-    // Get $PORT for HttpServer
+    // GetSession $PORT for HttpServer
     let port = env::var("PORT")
         .unwrap_or(String::from("8000"))
         .parse()

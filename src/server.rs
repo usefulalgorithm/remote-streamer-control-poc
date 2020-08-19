@@ -1,9 +1,8 @@
 pub use crate::messages::{
-    ClientMessage, Connect, Disconnect, EncoderMessage, EncoderMessageType, List, SimpleMessage,
+    ClientMessage, Connect, Disconnect, EncoderMessage, EncoderMessageType, GetSession, List,
 };
 use {
     actix::prelude::*,
-    futures::executor::block_on,
     rand::{self, rngs::ThreadRng, Rng},
     std::collections::HashMap,
 };
@@ -11,8 +10,8 @@ use {
 /// `RemoteServer` is responsible for managing encoder websocket endpoints
 /// and dispatching client messages.
 pub struct RemoteServer {
-    sessions: HashMap<usize, Recipient<SimpleMessage>>,
-    rng: ThreadRng,
+    pub sessions: HashMap<usize, Recipient<ClientMessage>>,
+    pub rng: ThreadRng,
 }
 
 impl Default for RemoteServer {
@@ -21,18 +20,6 @@ impl Default for RemoteServer {
             sessions: HashMap::new(),
             rng: rand::thread_rng(),
         }
-    }
-}
-
-impl RemoteServer {
-    /// Dispatch message to target
-    async fn send_message(&self, message: &str, addr: &Recipient<SimpleMessage>) -> usize {
-        addr.send(SimpleMessage(
-            serde_json::to_string(&EncoderMessage(EncoderMessageType::Cmd(message.to_owned())))
-                .unwrap(),
-        ))
-        .await
-        .unwrap()
     }
 }
 
@@ -60,18 +47,6 @@ impl Handler<Disconnect> for RemoteServer {
     }
 }
 
-impl Handler<ClientMessage> for RemoteServer {
-    type Result = Option<usize>;
-    fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Self::Result {
-        if let Some(addr) = self.sessions.get(&msg.target) {
-            return Some(block_on(
-                self.send_message(std::str::from_utf8(&msg.msg).unwrap(), &addr),
-            ));
-        }
-        None
-    }
-}
-
 impl Handler<List> for RemoteServer {
     type Result = MessageResult<List>;
     fn handle(&mut self, _: List, _: &mut Context<Self>) -> Self::Result {
@@ -80,5 +55,17 @@ impl Handler<List> for RemoteServer {
             encoders.push(*key);
         }
         MessageResult(encoders)
+    }
+}
+
+impl Handler<GetSession> for RemoteServer {
+    type Result = MessageResult<GetSession>;
+    fn handle(&mut self, msg: GetSession, _: &mut Context<Self>) -> Self::Result {
+        let target = msg.0;
+        if self.sessions.contains_key(&target) {
+            let session = self.sessions.get(&target).unwrap().clone();
+            return MessageResult(Some(session));
+        }
+        MessageResult(None)
     }
 }
