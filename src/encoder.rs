@@ -10,7 +10,7 @@ use {
     futures::stream::{SplitSink, StreamExt},
     log::{info, warn},
     messages::{EncoderMessage, EncoderMessageType},
-    std::{env, thread, time::Duration},
+    std::{env, time::Duration},
 };
 
 pub mod messages;
